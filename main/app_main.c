@@ -32,6 +32,8 @@
 
 #include "driver/gpio.h"
 
+#include <cJSON.h>
+
 static const char *TAG = "mqtt_example";
 
 #define BLINK_GPIO 8
@@ -39,20 +41,22 @@ static const char *TAG = "mqtt_example";
 // MQTT topics (based on the Python code)
 static const char *discovery_prefix = "homeassistant";
 static char device_id[7];
-static char object_id_switch[32], object_id_number[32], object_id_text[32];
-static char config_topic_switch[64], config_topic_number[64], config_topic_text[64];
-static char command_topic_switch[64], command_topic_number[64], command_topic_text[64];
-static char state_topic_switch[64], state_topic_number[64], state_topic_text[64];
+static char *config_topic = "homeassistant/light/6xalj9_light/config";
+static char *command_topic = "homeassistant/light/6xalj9_light/set";
+static char *state_topic = "homeassistant/light/6xalj9_light/state";
 
-// Device state (same as in Python code)
-struct device_state {
-    bool switch_state;
-    int number_value;
-    char text[64];
-} device_state;
+struct LightState {
+    bool is_on;          // ON/OFF state
+    uint16_t r;          // Red color component (0-4095)
+    uint16_t g;          // Green color component (0-4095)
+    uint16_t b;          // Blue color component (0-4095)
+    uint16_t w;          // White color component (0-4095)
+    uint16_t brightness; // Overall brightness (0-4095)
+} stLightState;
 
 // Forward declarations
 static void publish_config(esp_mqtt_client_handle_t client);
+static bool parse_mqtt_message(const char *payload, struct LightState *state);
 
 static void log_error_if_nonzero(const char *message, int error_code)
 {
@@ -80,9 +84,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-        esp_mqtt_client_subscribe(client, command_topic_switch, 0);
-        esp_mqtt_client_subscribe(client, command_topic_number, 0);
-        esp_mqtt_client_subscribe(client, command_topic_text, 0);
+        esp_mqtt_client_subscribe(client, command_topic, 0);
         publish_config(client);
         break;
     case MQTT_EVENT_DISCONNECTED:
@@ -91,11 +93,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-        //msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-        //ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
-        //ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
@@ -103,28 +102,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_DATA:
         printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
         printf("DATA=%.*s\r\n", event->data_len, event->data);
-        char payload[64];
-        snprintf(payload, sizeof(payload), "%.*s", event->data_len, event->data);
-        device_state.switch_state = strcmp(payload, "ON") == 0;
-        printf("DEVICE_STATE=%i\n", device_state.switch_state);
-
-        char topic_buffer[256]; // Allocate a buffer large enough to hold the topic
-        snprintf(topic_buffer, event->topic_len + 1, "%.*s", event->topic_len, event->topic);
-        
-        if (strcmp(topic_buffer, command_topic_switch) == 0) {
-            //device_state.switch_state = strcmp(payload, "ON") == 0;
-            esp_mqtt_client_publish(client, state_topic_switch, device_state.switch_state ? "ON" : "OFF", 0, 0, true);
-            ESP_LOGI(TAG, "Switch state updated to: %s", device_state.switch_state ? "ON" : "OFF");
-        } else if (strcmp(topic_buffer, command_topic_number) == 0) {
-            device_state.number_value = atoi(payload);
-            esp_mqtt_client_publish(client, state_topic_number, payload, 0, 0, true);
-            ESP_LOGI(TAG, "Number state updated to: %d", device_state.number_value);
-        } else if (strcmp(topic_buffer, command_topic_text) == 0) {
-            strncpy(device_state.text, payload, sizeof(device_state.text) - 1);
-            esp_mqtt_client_publish(client, state_topic_text, device_state.text, 0, 0, true);
-            ESP_LOGI(TAG, "Text state updated to: %s", device_state.text);
-        }
-        
+        parse_mqtt_message(event->data,&stLightState);
+        printf("DEVICE_STATE=%i\n", stLightState.is_on);
+        esp_mqtt_client_publish(client, state_topic, event->data, event->data_len, 0, true);
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
@@ -142,29 +122,97 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
+char *create_config(void)
+{
+	char *string = NULL;
+	cJSON *supported_color_modes = NULL;
+	cJSON *supported_color_modes_string = NULL;
+	
+	cJSON *identifier = NULL;
+	cJSON *identifier_string = NULL;
+	
+	cJSON *config = cJSON_CreateObject();
+	
+	if (cJSON_AddStringToObject(config, "name", "REGEBELEEGHT") == NULL)
+	{
+		goto end;
+	}
+	
+	cJSON_AddStringToObject(config, "command_topic", "homeassistant/light/6xalj9_light/set");
+	cJSON_AddStringToObject(config, "state_topic", "homeassistant/light/6xalj9_light/state");
+	cJSON_AddStringToObject(config, "unique_id", "6xalj9_light");
+	cJSON_AddStringToObject(config, "platform", "mqtt");
+	
+	//create device JSON
+	cJSON *device = cJSON_CreateObject();
+	identifier = cJSON_AddArrayToObject(device, "ids");
+	identifier_string = cJSON_CreateString("6xalj9"); //could also use CJSON_PUBLIC(cJSON *) cJSON_CreateStringArray(const char *const *strings, int count); if more than 1 color
+	cJSON_AddItemToArray(identifier, identifier_string);
+	cJSON_AddStringToObject(device, "name", "OngaroLight");
+	cJSON_AddStringToObject(device, "mf", "Ongaro");
+	cJSON_AddStringToObject(device, "mdl", "blingbling");
+	cJSON_AddStringToObject(device, "sw", "alpha");
+	cJSON_AddNumberToObject(device, "sn", 124589);
+	
+	// add device JSON to the config JSON
+	cJSON_AddItemToObject(config, "device", device);
+	
+	cJSON_AddStringToObject(config, "schema", "json");
+	cJSON_AddTrueToObject(config, "brightness");
+	cJSON_AddNumberToObject(config, "brightness_scale", 4095);
+	supported_color_modes = cJSON_AddArrayToObject(config, "supported_color_modes");
+	supported_color_modes_string = cJSON_CreateString("rgbw"); //could also use CJSON_PUBLIC(cJSON *) cJSON_CreateStringArray(const char *const *strings, int count); if more than 1 color
+	cJSON_AddItemToArray(supported_color_modes, supported_color_modes_string);	
+	string = cJSON_Print(config);
+	printf("%s \n", string);
+	
+	
+end:
+	cJSON_Delete(config);
+	return string;
+}
+
+bool parse_mqtt_message(const char *payload, struct LightState *state) {
+    cJSON *root = cJSON_Parse(payload);
+    if (root == NULL) {
+        return false;
+    }
+
+    // Always check and set state
+    cJSON *state_json = cJSON_GetObjectItemCaseSensitive(root, "state");
+    if (cJSON_IsString(state_json) && (state_json->valuestring != NULL)) {
+        state->is_on = (strcmp(state_json->valuestring, "ON") == 0);
+    }
+
+    // Color parsing - only update if color is present
+    cJSON *color_json = cJSON_GetObjectItemCaseSensitive(root, "color");
+    if (cJSON_IsObject(color_json)) {
+        cJSON *r = cJSON_GetObjectItemCaseSensitive(color_json, "r");
+        cJSON *g = cJSON_GetObjectItemCaseSensitive(color_json, "g");
+        cJSON *b = cJSON_GetObjectItemCaseSensitive(color_json, "b");
+        cJSON *w = cJSON_GetObjectItemCaseSensitive(color_json, "w");
+
+        state->r = cJSON_IsNumber(r) ? r->valueint : state->r;
+        state->g = cJSON_IsNumber(g) ? g->valueint : state->g;
+        state->b = cJSON_IsNumber(b) ? b->valueint : state->b;
+        state->w = cJSON_IsNumber(w) ? w->valueint : state->w;
+    }
+
+    // Brightness parsing
+    cJSON *brightness_json = cJSON_GetObjectItemCaseSensitive(root, "brightness");
+    state->brightness = cJSON_IsNumber(brightness_json) ? 
+                        brightness_json->valueint : state->brightness;
+
+    cJSON_Delete(root);
+    return true;
+}
+
 // Function to publish configuration topics
 static void publish_config(esp_mqtt_client_handle_t client) {
-    char config_payload[1024];
-
-    // Switch configuration
-    snprintf(config_payload, sizeof(config_payload),
-         "{\"name\": \"Simulated Switch\", \"command_topic\": \"%s\", \"state_topic\": \"%s\", \"unique_id\": \"%s\", \"device\": {\"identifiers\": [\"%s\"], \"name\": \"Device 0.9\", \"model\": \"ETERNAL\", \"manufacturer\": \"Ongaro Labs\"}, \"platform\": \"mqtt\", \"schema\": \"basic\"}",
-         command_topic_switch, state_topic_switch, object_id_switch, device_id);
-    esp_mqtt_client_publish(client, config_topic_switch, config_payload, 0, 0, true);
-
-    // Number configuration
-    snprintf(config_payload, sizeof(config_payload),
-         "{\"name\": \"Simulated Number\", \"command_topic\": \"%s\", \"state_topic\": \"%s\", \"min\": 0, \"max\": 100, \"unique_id\": \"%s\", \"device\": {\"identifiers\": [\"%s\"], \"name\": \"Device 0.9\", \"model\": \"ETERNAL\", \"manufacturer\": \"Ongaro Labs\"}, \"platform\": \"mqtt\"}",
-         command_topic_number, state_topic_number, object_id_number, device_id);
-    esp_mqtt_client_publish(client, config_topic_number, config_payload, 0, 0, true);
-
-    // Text configuration (for datetime)
-    snprintf(config_payload, sizeof(config_payload),
-         "{\"name\": \"Simulated Datetime Text\", \"command_topic\": \"%s\", \"state_topic\": \"%s\", \"unique_id\": \"%s\", \"device\": {\"identifiers\": [\"%s\"], \"name\": \"Device 0.9\", \"model\": \"ETERNAL\", \"manufacturer\": \"Ongaro Labs\"}, \"platform\": \"mqtt\"}",
-         command_topic_text, state_topic_text, object_id_text, device_id);
-    esp_mqtt_client_publish(client, config_topic_text, config_payload, 0, 0, true);
-
+    char *my_config = create_config();
+    esp_mqtt_client_publish(client, config_topic, my_config, 0, 0, true);
     ESP_LOGI(TAG, "Published configuration topics");
+    free(my_config);
 }
 
 static void mqtt_app_start(void)
@@ -191,7 +239,7 @@ static void configure_led(void)
 static void set_led(void)
 {
     /* Set the GPIO level according to the state (LOW or HIGH)*/
-    gpio_set_level(BLINK_GPIO, device_state.switch_state);
+    gpio_set_level(BLINK_GPIO, stLightState.is_on);
 }
 
 void led_control(void *pvParameters) {
@@ -234,24 +282,6 @@ void app_main(void)
         device_id[i] = "abcdefghijklmnopqrstuvwxyz0123456789"[esp_random() % 36];
     }
     device_id[6] = '\0';
-
-    // Set MQTT topics based on device_id
-    snprintf(object_id_switch, sizeof(object_id_switch), "%s_switch", device_id);
-    snprintf(object_id_number, sizeof(object_id_number), "%s_number", device_id);
-    snprintf(object_id_text, sizeof(object_id_text), "%s_text", device_id);
-
-    snprintf(config_topic_switch, sizeof(config_topic_switch), "%s/switch/%s/config", discovery_prefix, object_id_switch);
-    snprintf(config_topic_number, sizeof(config_topic_number), "%s/number/%s/config", discovery_prefix, object_id_number);
-    snprintf(config_topic_text, sizeof(config_topic_text), "%s/text/%s/config", discovery_prefix, object_id_text);
-
-    snprintf(command_topic_switch, sizeof(command_topic_switch), "%s/switch/%s/set", discovery_prefix, object_id_switch);
-    snprintf(command_topic_number, sizeof(command_topic_number), "%s/number/%s/set", discovery_prefix, object_id_number);
-    snprintf(command_topic_text, sizeof(command_topic_text), "%s/text/%s/set", discovery_prefix, object_id_text);
-
-    snprintf(state_topic_switch, sizeof(state_topic_switch), "%s/switch/%s/state", discovery_prefix, object_id_switch);
-    snprintf(state_topic_number, sizeof(state_topic_number), "%s/number/%s/state", discovery_prefix, object_id_number);
-    snprintf(state_topic_text, sizeof(state_topic_text), "%s/text/%s/state", discovery_prefix, object_id_text);
-
     mqtt_app_start();
 
     // Create a FreeRTOS task

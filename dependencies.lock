@@ -10,6 +10,6 @@ dependencies:
       path: C:\Users\ongar\esp\v5.2.1\esp-idf\examples\common_components\protocol_examples_common
       type: local
     version: '*'
-manifest_hash: f85afbc2b1220c3872072125a61caf97603e07df4bf81e81319873f3efc71ba5
+manifest_hash: a122cf98111e945e3b7d5018a317330d0b5f1131259f8154d587e165405c555b
 target: esp32c3
 version: 1.0.0

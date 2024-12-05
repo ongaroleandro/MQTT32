@@ -1,0 +1,6 @@
+[submodule "components/components"]
+	path = components/components
+	url = https://github.com/okhsunrog/esp_ws28xx
+[submodule "components/esp_ws28xx"]
+	path = components/esp_ws28xx
+	url = https://github.com/okhsunrog/esp_ws28xx

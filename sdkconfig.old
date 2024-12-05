@@ -426,7 +426,7 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 # Example Configuration
 #
-CONFIG_BROKER_URL="mqtt://192.168.0.116:1883"
+CONFIG_BROKER_URL="mqtt://192.168.129.0:1883"
 CONFIG_MQTT_USERNAME="rpi"
 CONFIG_MQTT_PASSWORD="BobMarleyFaruk216"
 # end of Example Configuration

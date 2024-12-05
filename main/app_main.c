@@ -33,10 +33,14 @@
 #include "driver/gpio.h"
 
 #include <cJSON.h>
+#include "esp_ws28xx.h"
 
 static const char *TAG = "mqtt_example";
 
-#define BLINK_GPIO 8
+#define LED_GPIO 6
+#define LED_NUM 30
+
+CRGB* ws2812_buffer;
 
 // MQTT topics (based on the Python code)
 static const char *discovery_prefix = "homeassistant";
@@ -100,10 +104,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
         break;
     case MQTT_EVENT_DATA:
-        printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
+        printf("\n TOPIC=%.*s\r\n", event->topic_len, event->topic);
         printf("DATA=%.*s\r\n", event->data_len, event->data);
         parse_mqtt_message(event->data,&stLightState);
         printf("DEVICE_STATE=%i\n", stLightState.is_on);
+        printf("Lightstate: {r: %i g: %i b: %i} \n", stLightState.r, stLightState.g, stLightState.b);
         esp_mqtt_client_publish(client, state_topic, event->data, event->data_len, 0, true);
         break;
     case MQTT_EVENT_ERROR:
@@ -231,15 +236,16 @@ static void mqtt_app_start(void)
 
 static void configure_led(void)
 {
-    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
-    gpio_reset_pin(BLINK_GPIO);
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+    ESP_LOGI(TAG, "Initialised LED strip");
+    ws28xx_init(LED_GPIO, WS2812B, LED_NUM, &ws2812_buffer);
 }
 static void set_led(void)
 {
-    /* Set the GPIO level according to the state (LOW or HIGH)*/
-    gpio_set_level(BLINK_GPIO, stLightState.is_on);
+    for(int i = 0; i < LED_NUM; i++) {
+        if (!stLightState.is_on) ws2812_buffer[i] = (CRGB){.r=0, .g=0, .b=0};
+        else ws2812_buffer[i] = (CRGB){.r=stLightState.r, .g=stLightState.g, .b=stLightState.b};
+    }
+    ws28xx_update();
 }
 
 void led_control(void *pvParameters) {
@@ -247,7 +253,6 @@ void led_control(void *pvParameters) {
     configure_led();
     while (1) {
         set_led();
-        
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
